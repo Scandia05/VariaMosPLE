@@ -34,9 +34,15 @@ import { isJSDocThisTag } from "typescript";
 import * as alertify from "alertifyjs";
 import { Buffer } from "buffer";
 import { ConfigurationInformation } from "../../Domain/ProductLineEngineering/Entities/ConfigurationInformation";
+import { v4 as uuidv4 } from 'uuid';
+import socket from "../../Utils/Socket";
+
 
 export default class ProjectService {
   private graph: any;
+  public socket= socket;
+  private clientId: string;
+  public workspaceId: string;
   private projectManager: ProjectManager = new ProjectManager();
   private languageUseCases: LanguageUseCases = new LanguageUseCases();
   private projectPersistenceUseCases: ProjectPersistenceUseCases = new ProjectPersistenceUseCases();
@@ -87,6 +93,114 @@ export default class ProjectService {
 
   //   this.languageService.getLanguages(fun);
   // }
+
+  constructor() {
+    this.clientId = uuidv4();
+    this.workspaceId = uuidv4();  // Genera un workspaceId único para cada usuario
+
+    this.socket.on('connect', () => {
+      console.log('Connected to collaboration server with ID:', this.clientId, 'Workspace ID:', this.workspaceId);
+      this.socket.emit('registerWorkspace', { clientId: this.clientId, workspaceId: this.workspaceId });
+  });
+
+  this.socket.on('projectCreated', (data) => {
+    console.log('Received projectCreated event:', data); // Verificar si el evento fue recibido
+    if (data.workspaceId === this.workspaceId && data.clientId !== this.clientId) {
+        console.log(`Processing projectCreated for workspace ${data.workspaceId}`);
+        this.handleProjectCreated(data.project);
+    } else {
+        console.log('Ignored projectCreated from clientId:', data.clientId); // Ignorar si el evento fue enviado por el propio cliente
+    }
+});
+
+  // Cliente: Escuchar la creación de Product Line retransmitida por el servidor
+  this.socket.on('productLineCreated', (data) => {
+    console.log('Received productLineCreated event:', data); // Verificar si el evento fue recibido
+    if (data.workspaceId === this.workspaceId && data.clientId !== this.clientId) {
+        console.log(`Processing productLineCreated for workspace ${data.workspaceId}`);
+        this.handleProductLineCreated(data.projectId, data.productLine);
+    } else {
+        console.log('Ignored productLineCreated from clientId:', data.clientId); // Ignorar si el evento fue enviado por el propio cliente
+    }
+});
+
+  this.socket.on('modelCreated', (data) => {
+    console.log('Received modelCreated event:', data); // Log para verificar si el modelo fue recibido
+    if (data.workspaceId === this.workspaceId && data.clientId !== this.clientId) {
+      console.log(`Processing modelCreated for workspace ${data.workspaceId}`);
+      this.handleModelCreated(data.model);
+    } else {
+      console.log('Ignored modelCreated from clientId:', data.clientId); // Log si el evento es ignorado por alguna razón
+    }
+  });
+
+  this.socket.on('modelDeleted', (data) => {
+    console.log('Received modelDeleted event:', data); // Log para verificar si el evento fue recibido
+    if (data.workspaceId === this.workspaceId && data.clientId !== this.clientId) {
+      console.log('Processing modelDeleted for workspace:', this.workspaceId);
+      this.handleModelDeleted(data.modelId);
+    } else {
+      console.log('Ignored modelDeleted from clientId:', data.clientId); // Log si el evento es ignorado
+    }
+  });
+
+  this.socket.on('modelRenamed', (data) => {
+    console.log('Received modelRenamed event:', data); // Log para verificar si el evento fue recibido
+    if (data.workspaceId === this.workspaceId && data.clientId !== this.clientId) {
+      console.log('Processing modelRenamed for workspace:', this.workspaceId);
+      this.handleModelRenamed(data.modelId, data.newName);
+    } else {
+      console.log('Ignored modelRenamed from clientId:', data.clientId); // Log si el evento es ignorado
+    }
+  });
+
+  this.socket.on('modelConfigured', (data) => {
+    console.log('Received modelConfigured event:', data); // Log para verificar si el evento fue recibido
+    if (data.workspaceId === this.workspaceId && data.clientId !== this.clientId) {
+      console.log('Processing modelConfigured for workspace:', this.workspaceId);
+      this.handleModelConfigured(data.modelId, data.configuration);
+    } else {
+      console.log('Ignored modelConfigured from clientId:', data.clientId); // Log si el evento es ignorado
+    }
+  });
+
+    this.socket.on('invitationReceived', (data) => {
+      if (data.invitedUserEmail === this.getUserEmail()) {
+          const accept = window.confirm(`${data.inviterName} te ha invitado a colaborar. ¿Aceptar?`);
+          if (accept) {
+              this.joinWorkspace(data.workspaceId);
+          }
+      }
+  });
+
+  }
+  
+  getUserEmail(): string | null {
+    const userProfile = JSON.parse(sessionStorage.getItem('CurrentUserProfile') || localStorage.getItem('CurrentUserProfile'));
+    return userProfile ? userProfile.email : null;
+}
+
+setWorkspaceId(id: string) {
+  this.workspaceId = id;
+}
+
+// Método para obtener el workspaceId actual
+getWorkspaceId() {
+  return this.workspaceId;
+}
+
+public emitSocketEvent(event: string, data: any) {
+  this.socket.emit(event, data);
+}
+
+public getSocket() {
+  return this.socket;
+}
+
+  public getClientId(): string {
+    return this.clientId;
+  }
+
 
   public get currentLanguage(): Language {
     return this._currentLanguage;
@@ -611,8 +725,12 @@ export default class ProjectService {
   createNewProject(projectName: string, productLineName: string, type: string, domain: string) {
     let project = this.projectManager.createProject(projectName);
     this.createLPS(project, productLineName, type, domain);
+
+    // Emitir evento de creación de proyecto para trabajo colaborativo
+    this.emitProjectCreated(project);
+
     return project;
-  }
+}
 
   createProject(projectName: string): Project {
     let project = this.projectManager.createProject(projectName);
@@ -620,6 +738,36 @@ export default class ProjectService {
 
     return project;
   }
+
+  private emitProjectCreated(project: Project) {
+    this.socket.emit('projectCreated', {
+        clientId: this.clientId,
+        workspaceId: this.workspaceId,
+        project
+    });
+}
+
+private handleProjectCreated(project: Project) {
+  console.log('New project created:', project);
+  this._project = project;
+  this.raiseEventUpdateProject(project, null);
+}
+  
+  inviteUserToWorkspace(invitedUserEmail: string) {
+    this.socket.emit('inviteUser', {
+        workspaceId: this.workspaceId,
+        invitedUserEmail,
+    });
+}
+
+joinWorkspace(workspaceId: string) {
+  this.setWorkspaceId(workspaceId);
+  this.socket.emit('joinWorkspace', { clientId: this.clientId, workspaceId: this.workspaceId });
+  console.log(`joinWorkspace emitted with clientId: ${this.clientId} and workspaceId: ${workspaceId}`);
+  if (this._project && this._project.id === 'my_project_id') { // Aquí puedes verificar que sea el proyecto por defecto
+    this.emitProjectCreated(this._project); // Enviar el proyecto a los otros usuarios
+  }
+}
 
   //This gets called when one uploads a project file
   //It takes as the parameters the file one selects from the
@@ -808,6 +956,7 @@ export default class ProjectService {
       this._project,
       this.treeIdItemSelected
     );
+    this.emitModelDeleted(this.treeIdItemSelected);
     this.raiseEventUpdateProject(this._project, null);
   }
 
@@ -822,8 +971,10 @@ export default class ProjectService {
       this.treeIdItemSelected,
       newName
     );
+    this.emitModelRenamed(this.treeIdItemSelected, newName);
     this.raiseEventUpdateProject(this._project, this.treeIdItemSelected);
   }
+
 
   getItemProjectName() {
     return this.projectManager.getItemProjectName(
@@ -895,19 +1046,38 @@ export default class ProjectService {
   //Project functions_ END***********
 
   //Product Line functions_ START***********
-  createLPS(
-    project: Project,
-    productLineName: string,
-    type: string,
-    domain: string
-  ) {
-    return this.projectManager.createLps(
-      project,
-      productLineName,
-      type,
-      domain
-    );
+  createLPS(project: Project, productLineName: string, type: string, domain: string): ProductLine {
+    let productLine = this.projectManager.createLps(project, productLineName, type, domain);
+
+    // Emitir evento de creación de LPS para trabajo colaborativo
+    this.emitProductLineCreated(project.id, productLine);
+
+    return productLine;
+}
+
+private emitProductLineCreated(projectId: string, productLine: ProductLine) {
+    this.socket.emit('productLineCreated', {
+        clientId: this.clientId,
+        workspaceId: this.workspaceId,
+        projectId: projectId,
+        productLine
+    });
+}
+
+private handleProductLineCreated(projectId: string, productLine: ProductLine) {
+  console.log('Adding productLine to the project:', projectId, productLine);
+
+  const project = this._project;
+  if (project && project.id === projectId) {
+     project.productLines.push(productLine);
+     console.log('ProductLine added, raising event to update UI');
+
+     // Asegurarse de levantar el evento para refrescar la UI
+     this.raiseEventNewProductLine(productLine);
+  } else {
+     console.error('Project not found or ID mismatch');
   }
+}
 
   addNewProductLineListener(listener: any) {
     this.newProductLineListeners.push(listener);
@@ -983,17 +1153,10 @@ export default class ProjectService {
   //Adaptation functions_ END***********
 
   //createDomainEngineeringModel functions_ START***********
-  createDomainEngineeringModel(
-    project: Project,
-    languageType: string,
-    name: string
-  ) {
-    return this.projectManager.createDomainEngineeringModel(
-      project,
-      languageType,
-      this.productLineSelected,
-      name
-    );
+  createDomainEngineeringModel(project: Project, languageType: string, name: string) {
+    const newModel = this.projectManager.createDomainEngineeringModel(project, languageType, this.productLineSelected, name);
+    this.emitModelCreated(newModel);
+    return newModel;
   }
 
   addNewDomainEngineeringModelListener(listener: any) {
@@ -1019,17 +1182,10 @@ export default class ProjectService {
   //createDomainEngineeringModel functions_ END***********
 
   //createApplicationEngineeringModel functions_ START***********
-  createApplicationEngineeringModel(
-    project: Project,
-    languageType: string,
-    name: string
-  ) {
-    return this.projectManager.createApplicationEngineeringModel(
-      project,
-      languageType,
-      this.productLineSelected,
-      name
-    );
+  createApplicationEngineeringModel(project: Project, languageType: string, name: string) {
+    const newModel = this.projectManager.createApplicationEngineeringModel(project, languageType, this.productLineSelected, name);
+    this.emitModelCreated(newModel);
+    return newModel;
   }
 
   addNewApplicationEngineeringModelListener(listener: any) {
@@ -1056,13 +1212,9 @@ export default class ProjectService {
 
   //createApplicationModel functions_ START***********
   createApplicationModel(project: Project, languageType: string, name: string) {
-    return this.projectManager.createApplicationModel(
-      project,
-      languageType,
-      this.productLineSelected,
-      this.applicationSelected,
-      name
-    );
+    const newModel = this.projectManager.createApplicationModel(project, languageType, this.productLineSelected, this.applicationSelected, name);
+    this.emitModelCreated(newModel);
+    return newModel;
   }
 
   addNewApplicationModelListener(listener: any) {
@@ -1089,14 +1241,121 @@ export default class ProjectService {
 
   //createAdaptationModel functions_ START***********
   createAdaptationModel(project: Project, languageType: string, name: string) {
-    return this.projectManager.createAdaptationModel(
-      project,
-      languageType,
-      this.productLineSelected,
-      this.applicationSelected,
-      this.adaptationSelected,
-      name
+    const newModel = this.projectManager.createAdaptationModel(project, languageType, this.productLineSelected, this.applicationSelected, this.adaptationSelected, name);
+    this.emitModelCreated(newModel);
+    return newModel;
+  }
+
+  private emitModelCreated(model: Model) {
+    console.log('Emitting modelCreated event:', { clientId: this.clientId, workspaceId: this.workspaceId, projectId: this._project.id, productLineId: this._project.productLines[this.productLineSelected].id, model});
+    this.socket.emit('modelCreated', { clientId: this.clientId, workspaceId: this.workspaceId, projectId: this._project.id, productLineId: this._project.productLines[this.productLineSelected].id, model });
+  }
+
+  private handleModelCreated(model: Model) {
+    const productLine = this._project.productLines[this.productLineSelected];
+  
+    if (!productLine) {
+      console.error('Product line not found');
+      return;
+    }
+  
+    if (productLine.domainEngineering) {
+      productLine.domainEngineering.models.push(model);
+      this.raiseEventDomainEngineeringModel(model);
+    } else if (productLine.applicationEngineering) {
+      productLine.applicationEngineering.models.push(model);
+      this.raiseEventApplicationEngineeringModel(model);
+    } else {
+      console.error('Model type not recognized or not handled yet');
+    }
+  }
+  
+  private emitModelDeleted(modelId: string) {
+    console.log('Emitting modelDeleted event:', { clientId: this.clientId, workspaceId: this.workspaceId, projectId: this._project.id, productLineId: this._project.productLines[this.productLineSelected].id, modelId });
+    this.socket.emit('modelDeleted', {
+      clientId: this.clientId,
+      workspaceId: this.workspaceId,
+      projectId: this._project.id, 
+      productLineId: this._project.productLines[this.productLineSelected].id,
+      modelId
+    });
+  }
+
+  private handleModelDeleted(itemId: string) {
+    this._project = this.projectManager.deleteItemProject(
+      this._project,
+      itemId
     );
+    this.raiseEventUpdateProject(this._project, null);
+  }
+
+  private emitModelRenamed(modelId: string, newName: string) {
+    console.log('Emitting modelRenamed event:', { clientId: this.clientId, workspaceId: this.workspaceId, projectId: this._project.id, productLineId: this._project.productLines[this.productLineSelected].id, modelId, newName,});
+    this.socket.emit('modelRenamed', {
+      clientId: this.clientId,
+      workspaceId: this.workspaceId,
+      projectId: this._project.id, 
+      productLineId: this._project.productLines[this.productLineSelected].id,
+      modelId,
+      newName,
+    });
+  }
+  
+  private handleModelRenamed(modelId: string, newName: string) {
+    // Primero, verificar si el ID corresponde a un productLine
+    this._project.productLines.forEach(productLine => {
+      if (productLine.id === modelId) {
+        // Si es un productLine, renombrarlo
+        productLine.name = newName;
+      }
+  
+      // Renombrar los modelos dentro de domainEngineering
+      productLine.domainEngineering.models.forEach(model => {
+        if (model.id === modelId) {
+          model.name = newName;
+        }
+      });
+  
+      // Renombrar los modelos dentro de applicationEngineering
+      productLine.applicationEngineering.models.forEach(model => {
+        if (model.id === modelId) {
+          model.name = newName;
+        }
+      });
+  
+      // Renombrar los modelos dentro de applications
+      productLine.applicationEngineering.applications.forEach(application => {
+        application.models.forEach(model => {
+          if (model.id === modelId) {
+            model.name = newName;
+          }
+        });
+  
+        // Renombrar los modelos dentro de adaptations
+        application.adaptations.forEach(adaptation => {
+          adaptation.models.forEach(model => {
+            if (model.id === modelId) {
+              model.name = newName;
+            }
+          });
+        });
+      });
+    });
+  
+    // Levantar el evento para notificar que el proyecto ha sido actualizado
+    this.raiseEventUpdateProject(this._project, modelId);
+  }
+  
+  private emitModelConfigured(modelId: string, configuration: Model) {
+    console.log('Emitting modelConfigured event:', { clientId: this.clientId, workspaceId: this.workspaceId, projectId: this._project.id, productLineId: this._project.productLines[this.productLineSelected].id, modelId, configuration });
+    this.socket.emit('modelConfigured', { clientId: this.clientId, workspaceId: this.workspaceId, projectId: this._project.id, productLineId: this._project.productLines[this.productLineSelected].id, modelId, configuration });
+  }
+
+  private handleModelConfigured(modelId: string, configuration: Model) {
+    let targetModel: Model = this.findModelById(this._project, modelId);
+    targetModel.elements = configuration.elements;
+    targetModel.relationships = configuration.relationships;
+    this.raiseEventUpdateProject(this._project, modelId);
   }
 
   addNewAdaptationModelListener(listener: any) {

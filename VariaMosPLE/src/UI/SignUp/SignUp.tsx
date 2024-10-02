@@ -7,6 +7,8 @@ import { SignUpKeys, SignUpMessages, SignUpURLs, SignUpUserTypes } from "./SignU
 import env from 'react-dotenv';
 import { gapi } from 'gapi-script';
 import { Config } from "../../Config";
+import { v4 as uuidv4 } from 'uuid';
+import socket from "../../Utils/Socket";
 
 function SignInUp() {
   const [loginProgress, setLoginProgress] = useState(SignUpMessages.Welcome);
@@ -30,7 +32,10 @@ function SignInUp() {
   }, [])
 
   const signUpAsAGuestHandler = () => {
-    const guestProfile = { email: null, givenName: 'Guest', userType: SignUpUserTypes.Guest }
+    const workspaceId = uuidv4();
+    socket.emit('signUpAsGuest');
+    socket.on('guestIdAssigned', (data) => {
+      const guestProfile = { email: null, givenName: `Guest ${data.guestId}`, userType: SignUpUserTypes.Guest, workspaceId };
     const stringifiedGuestProfile = JSON.stringify(guestProfile)
     sessionStorage.setItem(SignUpKeys.CurrentUserProfile, stringifiedGuestProfile);
     localStorage.setItem(SignUpKeys.CurrentUserProfile, stringifiedGuestProfile); // Copying the value to LocalStorage to share it between microfrontends
@@ -38,10 +43,12 @@ function SignInUp() {
     sessionStorage.removeItem(SignUpKeys.DataBaseUserProfile);
     localStorage.removeItem(SignUpKeys.DataBaseUserProfile); // Copying the value to LocalStorage to share it between microfrontends
     window.location.href = SignUpURLs.Dashboard;
+   });
   }
 
   const onSuccess = response => {     
-    const userProfile = { ...response.profileObj, userType: SignUpUserTypes.Registered };
+    const workspaceId = uuidv4();   
+    const userProfile = { ...response.profileObj, workspaceId, userType: SignUpUserTypes.Registered };
     const stringifiedUserProfile = JSON.stringify(userProfile);
     sessionStorage.setItem(SignUpKeys.CurrentUserProfile, stringifiedUserProfile);
     localStorage.setItem(SignUpKeys.CurrentUserProfile, stringifiedUserProfile); // Copying the value to LocalStorage to share it between microfrontends
