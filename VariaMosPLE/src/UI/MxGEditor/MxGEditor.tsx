@@ -409,6 +409,12 @@ me.socket.on('propertiesChanged', (data) => {
             // Actualizar las propiedades también en el gráfico (para celdas y conexiones)
             cell.value.setAttribute(prop.name, prop.value);
 
+            // Si es la propiedad 'selected', actualizar los overlays del ícono
+            if (prop.name === 'Selected') {
+              console.log('Updating icon overlay based on selected property');
+              me.createOverlays(element, cell); // Actualizar ícono localmente
+            }
+
             // Si es el nombre o label, mostrar log para depuración
             if (prop.name === 'label' || prop.name === 'name') {
               console.log(`propertiesChanged - Label/Name changed: ${prop.name} = ${prop.value}`);

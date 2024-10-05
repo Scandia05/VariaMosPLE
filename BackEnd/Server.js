@@ -273,65 +273,6 @@ socket.on('productLineCreated', async (data) => {
     io.to(data.workspaceId).emit('modelConfigured', data);
   });
 
-  socket.on('configurationCreated', async (data) => {
-    console.log('Server received configurationCreated:', data);
-  
-    const query = `
-      INSERT INTO testvariamos.configurations (id, name, query, project_id, workspace_id)
-      VALUES ($1, $2, $3, $4, $5)
-      ON CONFLICT (id) DO UPDATE
-      SET name = EXCLUDED.name, query = EXCLUDED.query
-    `;
-    const values = [data.id, data.name, JSON.stringify(data.query), data.projectId, data.workspaceId];
-  
-    try {
-      await queryDB(query, values);
-      console.log(`Configuration ${data.name} saved/updated in the database`);
-  
-      // Emitir el evento a todos los usuarios del workspace
-      io.to(data.workspaceId).emit('configurationCreated', data);
-    } catch (err) {
-      console.error('Error saving configuration in the database:', err);
-    }
-  });
-
-  socket.on('getAllConfigurations', async (data) => {
-    const { workspaceId } = data;
-    console.log(`Fetching configurations for workspace: ${workspaceId}`);
-  
-    const query = 'SELECT * FROM testvariamos.configurations WHERE workspace_id = $1';
-    const values = [workspaceId];
-  
-    try {
-      const result = await queryDB(query, values);
-      const configurations = result.rows;
-      
-      // Asegúrate de loggear las configuraciones antes de enviarlas
-      console.log(`Configurations fetched: ${JSON.stringify(configurations)}`);
-      
-      // Emitir las configuraciones al cliente
-      socket.emit('allConfigurationsReceived', configurations);
-    } catch (err) {
-      console.error('Error fetching configurations:', err);
-    }
-  });
-    
-  socket.on('configurationApplied', async (data) => {
-    console.log('Server received configurationApplied:', data);
-  
-    // Emitir el evento a todos los usuarios del workspace
-    io.to(data.workspaceId).emit('configurationApplied', data);
-  });
-
-  // Manejar la eliminación de configuraciones en el workspace
-socket.on('configurationDeleted', async (data) => {
-  console.log('Server received configurationDeleted:', data);
-
-  // Emitir el evento a todos los usuarios del workspace
-  io.to(data.workspaceId).emit('configurationDeleted', data);
-});
-
-  
   socket.on('cellMoved', async (data) => {
     console.log('Server received cellMoved:', data);
   
