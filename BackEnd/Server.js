@@ -16,9 +16,9 @@ const io = socketIo(server, {
 
 const pool = new Pool({
   user: 'adminpg',
-  host: 'app.variamos.com',
-  database: 'VariamosDB',
-  password: 'a=m=8hos.G!-s<*M1G',
+  host: '200.13.4.230',
+  database: 'variamos_nuevo',
+  password: 'seba2424',
   port: 5433,
 });
 
