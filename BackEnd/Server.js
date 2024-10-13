@@ -167,8 +167,22 @@ socket.on('joinWorkspace', async (data) => {
   socket.on('projectCreated', async (data) => {
     console.log('Server received projectCreated:', data);
 
-    const query = `INSERT INTO testvariamos.projects(id, name, workspace_id) VALUES($1, $2, $3)`;
-    const values = [data.project.id, data.project.name, data.workspaceId];
+    // Crear el JSON del proyecto para almacenarlo en la base de datos
+    const projectJson = {
+        id: data.project.id,
+        name: data.project.name,
+        enable: false,
+        productLines: [],  // Inicialmente vacío
+        languagesAllowed: [],
+        applicationEngineering: {
+            models: [],
+            languagesAllowed: [],
+            applications: []
+        }
+    };
+
+    const query = `INSERT INTO variamos.project(id, project) VALUES($1, $2)`;
+    const values = [data.project.id, JSON.stringify(projectJson)];
 
     try {
         await queryDB(query, values);
@@ -186,40 +200,98 @@ socket.on('joinWorkspace', async (data) => {
 socket.on('productLineCreated', async (data) => {
   console.log('Server received productLineCreated:', data);
 
-  const query = `INSERT INTO testvariamos.productlines(id, name, type, domain, project_id, workspace_id) 
-                 VALUES($1, $2, $3, $4, $5, $6)`;
-  const values = [data.productLine.id, data.productLine.name, data.productLine.type, data.productLine.domain, data.projectId, data.workspaceId];
+  // Consultar el proyecto existente en la base de datos
+  const selectProjectQuery = `SELECT project FROM variamos.project WHERE id = $1`;
+  const projectValues = [data.projectId];
 
   try {
-      await queryDB(query, values);
-      console.log(`ProductLine guardada en la base de datos: ${data.productLine.name}`);
+      const projectResult = await queryDB(selectProjectQuery, projectValues);
+      
+      if (projectResult.rows.length > 0) {
+          let projectJson = projectResult.rows[0].project;
+          
+          // Agregar la nueva product line al JSON del proyecto
+          const newProductLine = {
+              id: data.productLine.id,
+              name: data.productLine.name,
+              type: data.productLine.type,
+              domain: data.productLine.domain,
+              domainEngineering: {
+                  models: [],
+                  relationships: [],
+                  constraints: ""
+              }
+          };
+          
+          projectJson.productLines.push(newProductLine);
 
-      // Emitir el evento de creación de ProductLine a todos los usuarios del workspace
-      io.to(data.workspaceId).emit('productLineCreated', data);
+          // Guardar el JSON actualizado en la base de datos
+          const updateProjectQuery = `UPDATE variamos.project SET project = $1 WHERE id = $2`;
+          const updateValues = [JSON.stringify(projectJson), data.projectId];
+
+          await queryDB(updateProjectQuery, updateValues);
+          console.log(`ProductLine guardada en el proyecto: ${data.productLine.name}`);
+
+          // Emitir el evento de creación de ProductLine a todos los usuarios del workspace
+          io.to(data.workspaceId).emit('productLineCreated', data);
+      } else {
+          console.error('Error: Proyecto no encontrado para actualizar la ProductLine.');
+      }
 
   } catch (err) {
       console.error('Error guardando la ProductLine en la base de datos:', err);
   }
 });
 
-
   // Emitir eventos solo a los usuarios del mismo workspace
   socket.on('modelCreated', async (data) => {
     console.log('Server received modelCreated:', data);
-  
-    const query = `INSERT INTO testvariamos.models(id, name, type, data, workspace_id, project_id, product_line_id)
-                   VALUES($1, $2, $3, $4, $5, $6, $7)`;
-    const values = [data.model.id, data.model.name, data.model.type, JSON.stringify(data.model), data.workspaceId,data.projectId, data.productLineId];
-  
+
+    const selectProjectQuery = `SELECT project FROM variamos.project WHERE id = $1`;
+    const projectValues = [data.projectId];
+
     try {
-      await queryDB(query, values);
-      console.log(`Modelo guardado en la base de datos: ${data.model.name}`);
+        const projectResult = await queryDB(selectProjectQuery, projectValues);
+
+        if (projectResult.rows.length > 0) {
+            let projectJson = projectResult.rows[0].project;
+
+            // Agregar el nuevo modelo al JSON del proyecto
+            const newModel = {
+                id: data.model.id,
+                name: data.model.name,
+                type: data.model.type,
+                elements: [],
+                relationships: [],
+                constraints: ""
+            };
+
+            // Encontrar la productLine correspondiente
+            let productLine = projectJson.productLines.find(pl => pl.id === data.productLineId);
+            if (productLine) {
+                productLine.domainEngineering.models.push(newModel);
+            } else {
+                console.error('ProductLine no encontrada para agregar el modelo');
+                return;
+            }
+
+            // Guardar el JSON actualizado en la base de datos
+            const updateProjectQuery = `UPDATE variamos.project SET project = $1 WHERE id = $2`;
+            const updateValues = [JSON.stringify(projectJson), data.projectId];
+
+            await queryDB(updateProjectQuery, updateValues);
+            console.log(`Modelo guardado en el proyecto: ${data.model.name}`);
+
+            // Emitir el evento de creación de modelo a todos los usuarios del workspace
+            io.to(data.workspaceId).emit('modelCreated', data);
+        } else {
+            console.error('Error: Proyecto no encontrado para agregar el modelo.');
+        }
+
     } catch (err) {
-      console.error('Error guardando el modelo:', err);
+        console.error('Error guardando el modelo en el proyecto:', err);
     }
-  
-    io.to(data.workspaceId).emit('modelCreated', data);
-  });
+});
   
   // Manejar la eliminación de un modelo
   socket.on('modelDeleted', async (data) => {
