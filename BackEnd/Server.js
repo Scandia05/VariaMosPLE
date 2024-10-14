@@ -9,7 +9,7 @@ const app = express();
 const server = http.createServer(app);
 const io = socketIo(server, {
   cors: {
-    origin: "http://200.13.4.230:8080",
+    origin: "http://localhost:3000",
     methods: ["GET", "POST"]
   }
 });
@@ -19,7 +19,7 @@ const pool = new Pool({
   host: '200.13.4.230',
   database: 'variamos_nuevo',
   password: 'seba2424',
-  port: 5433,
+  port: 5432,
 });
 
 const queryDB = async (text, params) => {
@@ -58,12 +58,12 @@ io.on('connection', (socket) => {
   
     // Guardar la información del usuario en la base de datos
     const query = `
-      INSERT INTO testvariamos.users (email, socket_id, name)
-      VALUES ($1, $2, $3)
+      INSERT INTO variamos.user (id, "user", name, email, socket_id)
+      VALUES ($1, $2, $3, $4, $5)
       ON CONFLICT (email)
       DO UPDATE SET socket_id = EXCLUDED.socket_id, name = EXCLUDED.name
     `;
-    const values = [userData.email, socket.id, userData.name || ''];
+    const values = [uuidv4(), userData.user || '', userData.name || '', userData.email, socket.id]; // Asegúrate de que todos los valores están presentes
   
     try {
       await queryDB(query, values);
@@ -100,10 +100,10 @@ socket.on('joinWorkspace', async (data) => {
   console.log(`Client ${clientId} joined workspace ${workspaceId} (Socket ID: ${socket.id})`);
 
   // Guardar la relación entre el cliente y el workspace en la base de datos
-  const query = `INSERT INTO testvariamos.workspace_users (workspace_id, client_id, socket_id) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`;
+  const query = `INSERT INTO variamos.workspace_users (workspace_id, client_id, socket_id) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`;
   const values = [workspaceId, clientId, socket.id];
 
-  try { 
+  try {
     await queryDB(query, values);
     console.log(`Client ${clientId} added to workspace ${workspaceId} in the database`);
   } catch (err) {
@@ -111,8 +111,8 @@ socket.on('joinWorkspace', async (data) => {
   }
 
   // Verificar si el proyecto por defecto "My Project" ya existe en el workspace
-  const checkProjectQuery = `SELECT * FROM testvariamos.projects WHERE workspace_id = $1 AND name = $2`;
-  const projectValues = [workspaceId, 'My Project'];
+  const checkProjectQuery = `SELECT * FROM variamos.project WHERE workspace_id = $1 AND project->>'name' = $2`;
+  const projectValues = [workspaceId, 'My project'];
 
   try {
     const projectResult = await queryDB(checkProjectQuery, projectValues);
@@ -120,8 +120,15 @@ socket.on('joinWorkspace', async (data) => {
     if (projectResult.rowCount === 0) {
       // Si no existe, crear el proyecto "My Project"
       const projectId = uuidv4();
-      const insertProjectQuery = `INSERT INTO testvariamos.projects (id, name, workspace_id) VALUES ($1, $2, $3)`;
-      const insertProjectValues = [projectId, 'My Project', workspaceId];
+      const projectData = {
+        id: projectId,
+        name: 'My project',
+        enable: true,
+        productLines: [] // Puedes ajustar según lo que necesites en la estructura del proyecto
+      };
+      
+      const insertProjectQuery = `INSERT INTO variamos.project (id, project, workspace_id) VALUES ($1, $2, $3)`;
+      const insertProjectValues = [projectId, JSON.stringify(projectData), workspaceId];
       
       try {
         await queryDB(insertProjectQuery, insertProjectValues);
@@ -131,7 +138,7 @@ socket.on('joinWorkspace', async (data) => {
         io.to(socket.id).emit('projectCreated', {
           clientId,
           workspaceId,
-          project: { id: projectId, name: 'My Project' }
+          project: projectData
         });
       } catch (err) {
         console.error('Error creating "My Project":', err);
@@ -143,7 +150,7 @@ socket.on('joinWorkspace', async (data) => {
       io.to(socket.id).emit('projectCreated', {
         clientId,
         workspaceId,
-        project: projectResult.rows[0] // Emitimos el proyecto existente
+        project: projectResult.rows[0].project // Emitimos el proyecto existente desde el campo 'project'
       });
     }
   } catch (err) {
@@ -161,7 +168,6 @@ socket.on('joinWorkspace', async (data) => {
   // Notificar al cliente que ha unido un workspace
   io.to(socket.id).emit('workspaceJoined', { clientId, workspaceId });
 });
-
   
   // Manejar la creación de proyectos
   socket.on('projectCreated', async (data) => {
@@ -187,13 +193,11 @@ socket.on('joinWorkspace', async (data) => {
     try {
         await queryDB(query, values);
         console.log(`Proyecto guardado en la base de datos: ${data.project.name}`);
-
-        // Emitir el evento de creación de proyecto a todos los usuarios del workspace
-        io.to(data.workspaceId).emit('projectCreated', data);
-
     } catch (err) {
         console.error('Error guardando el proyecto en la base de datos:', err);
     }
+  // Emitir el evento de creación de proyecto a todos los usuarios del workspace
+  io.to(data.workspaceId).emit('projectCreated', data);
 });
 
 // Manejar la creación de productLines
@@ -231,9 +235,6 @@ socket.on('productLineCreated', async (data) => {
 
           await queryDB(updateProjectQuery, updateValues);
           console.log(`ProductLine guardada en el proyecto: ${data.productLine.name}`);
-
-          // Emitir el evento de creación de ProductLine a todos los usuarios del workspace
-          io.to(data.workspaceId).emit('productLineCreated', data);
       } else {
           console.error('Error: Proyecto no encontrado para actualizar la ProductLine.');
       }
@@ -241,6 +242,8 @@ socket.on('productLineCreated', async (data) => {
   } catch (err) {
       console.error('Error guardando la ProductLine en la base de datos:', err);
   }
+            // Emitir el evento de creación de ProductLine a todos los usuarios del workspace
+            io.to(data.workspaceId).emit('productLineCreated', data);
 });
 
   // Emitir eventos solo a los usuarios del mismo workspace
@@ -281,9 +284,6 @@ socket.on('productLineCreated', async (data) => {
 
             await queryDB(updateProjectQuery, updateValues);
             console.log(`Modelo guardado en el proyecto: ${data.model.name}`);
-
-            // Emitir el evento de creación de modelo a todos los usuarios del workspace
-            io.to(data.workspaceId).emit('modelCreated', data);
         } else {
             console.error('Error: Proyecto no encontrado para agregar el modelo.');
         }
@@ -291,288 +291,446 @@ socket.on('productLineCreated', async (data) => {
     } catch (err) {
         console.error('Error guardando el modelo en el proyecto:', err);
     }
+  // Emitir el evento de creación de modelo a todos los usuarios del workspace
+  io.to(data.workspaceId).emit('modelCreated', data);
 });
   
   // Manejar la eliminación de un modelo
   socket.on('modelDeleted', async (data) => {
     console.log(`Server received modelDeleted:`, data);
-  
-    const query = `DELETE FROM testvariamos.models WHERE id = $1`;
-    const values = [data.modelId];
-  
+
+    const selectProjectQuery = `SELECT project FROM variamos.project WHERE id = $1`;
+    const projectValues = [data.projectId];
+
     try {
-      await queryDB(query, values);
-      console.log(`Modelo eliminado de la base de datos: ${data.modelId}`);
+        const projectResult = await queryDB(selectProjectQuery, projectValues);
+
+        if (projectResult.rows.length > 0) {
+            let projectJson = projectResult.rows[0].project;
+
+            // Encontrar la product line correspondiente
+            let productLine = projectJson.productLines.find(pl => pl.id === data.productLineId);
+            if (productLine) {
+                // Eliminar el modelo correspondiente
+                productLine.domainEngineering.models = productLine.domainEngineering.models.filter(m => m.id !== data.modelId);
+
+                // Guardar el JSON actualizado en la base de datos
+                const updateProjectQuery = `UPDATE variamos.project SET project = $1 WHERE id = $2`;
+                const updateValues = [JSON.stringify(projectJson), data.projectId];
+
+                await queryDB(updateProjectQuery, updateValues);
+                console.log(`Modelo eliminado del proyecto: ${data.modelId}`);
+            } else {
+                console.error('ProductLine no encontrada para eliminar el modelo.');
+            }
+        } else {
+            console.error('Error: Proyecto no encontrado para eliminar el modelo.');
+        }
+
     } catch (err) {
-      console.error('Error eliminando el modelo:', err);
+        console.error('Error eliminando el modelo en el proyecto:', err);
     }
-  
-    io.to(data.workspaceId).emit('modelDeleted', data);  // Retransmitir a todos en el workspace
-  });
-  
+    
+  // Emitir el evento de eliminación del modelo a todos los usuarios del workspace
+  io.to(data.workspaceId).emit('modelDeleted', data);
+});
   
   // Manejar el renombramiento de un modelo
   socket.on('modelRenamed', async (data) => {
     console.log(`Server received modelRenamed:`, data);
-  
-    const query = `UPDATE testvariamos.models SET name = $1 WHERE id = $2`;
-    const values = [data.newName, data.modelId];
-  
+
+    const selectProjectQuery = `SELECT project FROM variamos.project WHERE id = $1`;
+    const projectValues = [data.projectId];
+
     try {
-      await queryDB(query, values);
-      console.log(`Nombre del modelo actualizado en la base de datos: ${data.modelId}`);
+        const projectResult = await queryDB(selectProjectQuery, projectValues);
+
+        if (projectResult.rows.length > 0) {
+            let projectJson = projectResult.rows[0].project;
+
+            // Encontrar la product line y el modelo correspondientes
+            let productLine = projectJson.productLines.find(pl => pl.id === data.productLineId);
+            if (productLine) {
+                let model = productLine.domainEngineering.models.find(m => m.id === data.modelId);
+                if (model) {
+                    // Renombrar el modelo
+                    model.name = data.newName;
+
+                    // Guardar el JSON actualizado en la base de datos
+                    const updateProjectQuery = `UPDATE variamos.project SET project = $1 WHERE id = $2`;
+                    const updateValues = [JSON.stringify(projectJson), data.projectId];
+
+                    await queryDB(updateProjectQuery, updateValues);
+                    console.log(`Nombre del modelo actualizado en el proyecto: ${data.modelId}`);
+                } else {
+                    console.error('Modelo no encontrado para renombrar.');
+                }
+            } else {
+                console.error('ProductLine no encontrada para renombrar el modelo.');
+            }
+        } else {
+            console.error('Error: Proyecto no encontrado para renombrar el modelo.');
+        }
+
     } catch (err) {
-      console.error('Error actualizando el nombre del modelo:', err);
+        console.error('Error renombrando el modelo en el proyecto:', err);
     }
-  
     io.to(data.workspaceId).emit('modelRenamed', data);
-  });
+});
   
   // Manejar la configuración de un modelo
   socket.on('modelConfigured', async (data) => {
     console.log(`Server received modelConfigured:`, data);
-  
-    const query = `UPDATE testvariamos.models SET data = $1 WHERE id = $2`;
-    const values = [JSON.stringify(data.configuration), data.modelId];
-  
+
+    const selectProjectQuery = `SELECT project FROM variamos.project WHERE id = $1`;
+    const projectValues = [data.projectId];
+
     try {
-      await queryDB(query, values);
-      console.log(`Modelo configurado actualizado en la base de datos: ${data.modelId}`);
+        const projectResult = await queryDB(selectProjectQuery, projectValues);
+
+        if (projectResult.rows.length > 0) {
+            let projectJson = projectResult.rows[0].project;
+
+            // Encontrar la product line y el modelo correspondientes
+            let productLine = projectJson.productLines.find(pl => pl.id === data.productLineId);
+            if (productLine) {
+                let model = productLine.domainEngineering.models.find(m => m.id === data.modelId);
+                if (model) {
+                    // Actualizar la configuración del modelo
+                    model.configuration = data.configuration;
+
+                    // Guardar el JSON actualizado en la base de datos
+                    const updateProjectQuery = `UPDATE variamos.project SET project = $1 WHERE id = $2`;
+                    const updateValues = [JSON.stringify(projectJson), data.projectId];
+
+                    await queryDB(updateProjectQuery, updateValues);
+                    console.log(`Configuración del modelo actualizada en el proyecto: ${data.modelId}`);
+
+                    // Emitir el evento de configuración a todos los usuarios del workspace
+
+                } else {
+                    console.error('Modelo no encontrado para configurar.');
+                }
+            } else {
+                console.error('ProductLine no encontrada para configurar el modelo.');
+            }
+        } else {
+            console.error('Error: Proyecto no encontrado para configurar el modelo.');
+        }
+
     } catch (err) {
-      console.error('Error actualizando el modelo configurado:', err);
+        console.error('Error configurando el modelo en el proyecto:', err);
     }
-  
     io.to(data.workspaceId).emit('modelConfigured', data);
-  });
-
-  socket.on('configurationCreated', async (data) => {
-    console.log('Server received configurationCreated:', data);
-  
-    const query = `
-      INSERT INTO testvariamos.configurations (id, name, query, project_id, workspace_id)
-      VALUES ($1, $2, $3, $4, $5)
-      ON CONFLICT (id) DO UPDATE
-      SET name = EXCLUDED.name, query = EXCLUDED.query
-    `;
-    const values = [data.id, data.name, JSON.stringify(data.query), data.projectId, data.workspaceId];
-  
-    try {
-      await queryDB(query, values);
-      console.log(`Configuration ${data.name} saved/updated in the database`);
-  
-      // Emitir el evento a todos los usuarios del workspace
-      io.to(data.workspaceId).emit('configurationCreated', data);
-    } catch (err) {
-      console.error('Error saving configuration in the database:', err);
-    }
-  });
-
-  socket.on('getAllConfigurations', async (data) => {
-    const { workspaceId } = data;
-    console.log(`Fetching configurations for workspace: ${workspaceId}`);
-  
-    const query = 'SELECT * FROM testvariamos.configurations WHERE workspace_id = $1';
-    const values = [workspaceId];
-  
-    try {
-      const result = await queryDB(query, values);
-      const configurations = result.rows;
-      
-      // Asegúrate de loggear las configuraciones antes de enviarlas
-      console.log(`Configurations fetched: ${JSON.stringify(configurations)}`);
-      
-      // Emitir las configuraciones al cliente
-      socket.emit('allConfigurationsReceived', configurations);
-    } catch (err) {
-      console.error('Error fetching configurations:', err);
-    }
-  });
-    
-  socket.on('configurationApplied', async (data) => {
-    console.log('Server received configurationApplied:', data);
-  
-    // Emitir el evento a todos los usuarios del workspace
-    io.to(data.workspaceId).emit('configurationApplied', data);
-  });
-
-  // Manejar la eliminación de configuraciones en el workspace
-socket.on('configurationDeleted', async (data) => {
-  console.log('Server received configurationDeleted:', data);
-
-  // Emitir el evento a todos los usuarios del workspace
-  io.to(data.workspaceId).emit('configurationDeleted', data);
 });
+  
+socket.on('cellMoved', async (data) => {
+  console.log('Server received cellMoved:', data);
 
+  const selectProjectQuery = `SELECT project FROM variamos.project WHERE id = $1`;
+  const projectValues = [data.projectId];
+
+  try {
+      const projectResult = await queryDB(selectProjectQuery, projectValues);
+
+      if (projectResult.rows.length > 0) {
+          let projectJson = projectResult.rows[0].project;
+
+          // Encontrar la product line y el modelo correspondientes
+          let productLine = projectJson.productLines.find(pl => pl.id === data.productLineId);
+          if (productLine) {
+              let model = productLine.domainEngineering.models.find(m => m.id === data.modelId);
+              if (model) {
+                  // Encontrar y mover la celda correspondiente
+                  let cell = model.elements.find(c => c.id === data.cellId);
+                  if (cell) {
+                      cell.x = data.cell.x;
+                      cell.y = data.cell.y;
+
+                      // Guardar el JSON actualizado en la base de datos
+                      const updateProjectQuery = `UPDATE variamos.project SET project = $1 WHERE id = $2`;
+                      const updateValues = [JSON.stringify(projectJson), data.projectId];
+
+                      await queryDB(updateProjectQuery, updateValues);
+                      console.log(`Celda movida actualizada en el proyecto: ${data.cellId}`);
+
+                      // Emitir el evento de movimiento a todos los usuarios del workspace
+                  } else {
+                      console.error('Celda no encontrada para mover.');
+                  }
+              } else {
+                  console.error('Modelo no encontrado para mover la celda.');
+              }
+          } else {
+              console.error('ProductLine no encontrada para mover la celda.');
+          }
+      } else {
+          console.error('Error: Proyecto no encontrado para mover la celda.');
+      }
+
+  } catch (err) {
+      console.error('Error moviendo la celda en el proyecto:', err);
+  }
+  io.to(data.workspaceId).emit('cellMoved', data);
+});
   
-  socket.on('cellMoved', async (data) => {
-    console.log('Server received cellMoved:', data);
-  
-    const query = `UPDATE testvariamos.cells SET data = $1 WHERE id = $2`;
-    const values = [JSON.stringify(data.cell), data.cellId];
-  
-    try {
-      await queryDB(query, values);
-      console.log(`Celda movida actualizada en la base de datos: ${data.cellId}`);
-    } catch (err) {
-      console.error('Error actualizando la celda:', err);
-    }
-  
-    io.to(data.workspaceId).emit('cellMoved', data);
-  });
-  
-  socket.on('cellResized', async (data) => {
-    console.log('Server received cellResized:', data);
-  
-    const query = `UPDATE testvariamos.cells SET data = $1 WHERE id = $2`;
-    const values = [JSON.stringify(data.cell), data.cellId];
-  
-    try {
-      await queryDB(query, values);
-      console.log(`Celda redimensionada actualizada en la base de datos: ${data.cellId}`);
-    } catch (err) {
-      console.error('Error actualizando la celda:', err);
-    }
-  
-    io.to(data.workspaceId).emit('cellResized', data);
-  });
-  
+socket.on('cellResized', async (data) => {
+  console.log('Server received cellResized:', data);
+
+  const selectProjectQuery = `SELECT project FROM variamos.project WHERE id = $1`;
+  const projectValues = [data.projectId];
+
+  try {
+      const projectResult = await queryDB(selectProjectQuery, projectValues);
+
+      if (projectResult.rows.length > 0) {
+          let projectJson = projectResult.rows[0].project;
+
+          // Encontrar la product line y el modelo correspondientes
+          let productLine = projectJson.productLines.find(pl => pl.id === data.productLineId);
+          if (productLine) {
+              let model = productLine.domainEngineering.models.find(m => m.id === data.modelId);
+              if (model) {
+                  // Encontrar y redimensionar la celda correspondiente
+                  let cell = model.elements.find(c => c.id === data.cellId);
+                  if (cell) {
+                      cell.width = data.cell.width;
+                      cell.height = data.cell.height;
+
+                      // Guardar el JSON actualizado en la base de datos
+                      const updateProjectQuery = `UPDATE variamos.project SET project = $1 WHERE id = $2`;
+                      const updateValues = [JSON.stringify(projectJson), data.projectId];
+
+                      await queryDB(updateProjectQuery, updateValues);
+                      console.log(`Celda redimensionada actualizada en el proyecto: ${data.cellId}`);
+
+                      // Emitir el evento de redimensionamiento a todos los usuarios del workspace
+                  } else {
+                      console.error('Celda no encontrada para redimensionar.');
+                  }
+              } else {
+                  console.error('Modelo no encontrado para redimensionar la celda.');
+              }
+          } else {
+              console.error('ProductLine no encontrada para redimensionar la celda.');
+          }
+      } else {
+          console.error('Error: Proyecto no encontrado para redimensionar la celda.');
+      }
+
+  } catch (err) {
+      console.error('Error redimensionando la celda en el proyecto:', err);
+  }
+  io.to(data.workspaceId).emit('cellResized', data);
+});
 
   socket.on('cellAdded', async (data) => {
     console.log('Server received cellAdded:', data);
-  
-    // Verificar que `data.cells` sea un array y que cada celda tenga los atributos necesarios
-    if (Array.isArray(data.cells)) {
-        for (const cell of data.cells) {
-            if (!cell.id || !cell.type || !data.modelId || !data.projectId || !data.productLineId) {
-                console.error('Missing necessary attributes for cell:', cell);
-                continue;  // Saltar si faltan atributos clave
-            }
-            
-            // Crear el objeto `cellData` con los atributos mínimos requeridos
-            const cellData = {
-                id: cell.id,
-                type: cell.type,
-                x: cell.x,
-                y: cell.y,
-                width: cell.width,
-                height: cell.height,
-                label: cell.label || '',
-                style: cell.style || '',
-                properties: cell.properties || []
-            };
 
-            const query = `
-                INSERT INTO testvariamos.cells (id, model_id, project_id, product_line_id, data)
-                VALUES ($1, $2, $3, $4, $5)
-                ON CONFLICT (id) DO UPDATE
-                SET data = EXCLUDED.data
-            `;
-            const values = [cell.id, data.modelId, data.projectId, data.productLineId, JSON.stringify(cellData)];
+    const selectProjectQuery = `SELECT project FROM variamos.project WHERE id = $1`;
+    const projectValues = [data.projectId];
 
-            try {
-                await queryDB(query, values);
-                console.log(`Cell ${cell.id} has been saved/updated in the database`);
-            } catch (err) {
-                console.error('Error saving cell data in the database:', err);
-            }
-        }
-    } else {
-        console.error('No cells received in the correct format');
-    }
-
-    // Emitir el evento a todos los usuarios del workspace
-    io.to(data.workspaceId).emit('cellAdded', data);
-    console.log(`Emitting cellAdded to all clients in workspace ${data.workspaceId}`);
-});
-  
-  socket.on('cellRemoved', async (data) => {
-    console.log('Server received cellRemoved:', data);
-
-    // Asegurarse de que se ha recibido una lista de celdas para eliminar
-    if (data.cellIds && data.cellIds.length > 0) {
-        for (const cellId of data.cellIds) {
-            const query = `DELETE FROM testvariamos.cells WHERE id = $1`;
-            const values = [cellId];
-
-            try {
-                await queryDB(query, values);
-                console.log(`Celda eliminada de la base de datos: ${cellId}`);
-            } catch (err) {
-                console.error(`Error eliminando la celda con ID ${cellId}:`, err);
-            }
-        }
-    } else {
-        console.log('No se encontraron celdas para eliminar');
-    }
-
-    // Emitir el evento de eliminación de celdas a los demás clientes del workspace
-    io.to(data.workspaceId).emit('cellRemoved', data);
-});
-
-
-  socket.on('cellConnected', async (data) => {
-    console.log('Server received cellConnected:', data);
-  
-    const query = `INSERT INTO testvariamos.connections(id, source_id, target_id, model_id, project_id, product_line_id, workspace_id)
-                   VALUES($1, $2, $3, $4, $5, $6, $7)`;
-    const values = [uuidv4(), data.sourceId, data.targetId, data.modelId, data.projectId, data.productLineId, data.workspaceId];
-  
     try {
-      await queryDB(query, values);
-      console.log(`Conexión guardada en la base de datos: ${data.sourceId} -> ${data.targetId}`);
-    } catch (err) {
-      console.error('Error guardando la conexión:', err);
-    }
-  
-    io.to(data.workspaceId).emit('cellConnected', data);
-  });
+        const projectResult = await queryDB(selectProjectQuery, projectValues);
 
-  socket.on('propertiesChanged', async (data) => {
-    console.log('Server received propertiesChanged:', data);
-  
-    // Emitir el cambio a los demás usuarios del workspace inmediatamente, sin esperar a la base de datos
-    io.to(data.workspaceId).emit('propertiesChanged', data);
-  
-    // Intentar realizar la actualización en la base de datos
-    try {
-      const queryGetCell = `SELECT data FROM testvariamos.cells WHERE id = $1`;
-      const valuesGetCell = [data.cellId];
-      
-      const cellResult = await queryDB(queryGetCell, valuesGetCell);
-  
-      if (cellResult.rows.length > 0) {
-        let cellData = JSON.parse(cellResult.rows[0].data);
-  
-        // Actualizar o eliminar propiedades en `cellData`
-        data.properties.forEach(prop => {
-          if (prop.deleted) {
-            cellData.properties = cellData.properties.filter(p => p.name !== prop.name);
-          } else {
-            const existingPropIndex = cellData.properties.findIndex(p => p.name === prop.name);
-            if (existingPropIndex !== -1) {
-              cellData.properties[existingPropIndex].value = prop.value;
+        if (projectResult.rows.length > 0) {
+            let projectJson = projectResult.rows[0].project;
+
+            // Encontrar la productLine y el modelo correspondientes
+            let productLine = projectJson.productLines.find(pl => pl.id === data.productLineId);
+            if (productLine) {
+                let model = productLine.domainEngineering.models.find(m => m.id === data.modelId);
+                if (model) {
+                    // Agregar las nuevas celdas al modelo
+                    data.cells.forEach(cell => {
+                        const newCell = {
+                            id: cell.id,
+                            type: cell.type,
+                            x: cell.x,
+                            y: cell.y,
+                            width: cell.width,
+                            height: cell.height,
+                            label: cell.label || '',
+                            style: cell.style || '',
+                            properties: cell.properties || []
+                        };
+                        model.elements.push(newCell);
+                    });
+
+                    // Guardar el JSON actualizado en la base de datos
+                    const updateProjectQuery = `UPDATE variamos.project SET project = $1 WHERE id = $2`;
+                    const updateValues = [JSON.stringify(projectJson), data.projectId];
+
+                    await queryDB(updateProjectQuery, updateValues);
+                    console.log(`Celdas guardadas en el modelo: ${data.modelId}`);
+
+                    // Emitir el evento de celdas añadidas a todos los usuarios del workspace
+                } else {
+                    console.error('Modelo no encontrado para agregar las celdas.');
+                }
             } else {
-              cellData.properties.push(prop);
+                console.error('ProductLine no encontrada para agregar las celdas.');
             }
-          }
-        });
-  
-        const queryUpdateCell = `UPDATE testvariamos.cells SET data = $1 WHERE id = $2`;
-        const valuesUpdateCell = [JSON.stringify(cellData), data.cellId];
-  
-        try {
-          await queryDB(queryUpdateCell, valuesUpdateCell);
-          console.log(`Propiedades de la celda actualizadas en la base de datos: ${data.cellId}`);
-        } catch (err) {
-          console.error('Error actualizando las propiedades de la celda:', err);
+        } else {
+            console.error('Error: Proyecto no encontrado para agregar las celdas.');
         }
-      } else {
-        console.log('Celda no encontrada en la base de datos para actualizar las propiedades.');
-      }
+
     } catch (err) {
-      console.error('Error obteniendo la celda para actualizar las propiedades:', err);
+        console.error('Error guardando las celdas en el proyecto:', err);
     }
-  });
+    io.to(data.workspaceId).emit('cellAdded', data);
+});
+
+socket.on('cellRemoved', async (data) => {
+  console.log('Server received cellRemoved:', data);
+
+  const selectProjectQuery = `SELECT project FROM variamos.project WHERE id = $1`;
+  const projectValues = [data.projectId];
+
+  try {
+      const projectResult = await queryDB(selectProjectQuery, projectValues);
+
+      if (projectResult.rows.length > 0) {
+          let projectJson = projectResult.rows[0].project;
+
+          // Encontrar la product line y el modelo correspondientes
+          let productLine = projectJson.productLines.find(pl => pl.id === data.productLineId);
+          if (productLine) {
+              let model = productLine.domainEngineering.models.find(m => m.id === data.modelId);
+              if (model) {
+                  // Eliminar las celdas correspondientes
+                  model.elements = model.elements.filter(c => !data.cellIds.includes(c.id));
+
+                  // Guardar el JSON actualizado en la base de datos
+                  const updateProjectQuery = `UPDATE variamos.project SET project = $1 WHERE id = $2`;
+                  const updateValues = [JSON.stringify(projectJson), data.projectId];
+
+                  await queryDB(updateProjectQuery, updateValues);
+                  console.log(`Celdas eliminadas del modelo: ${data.cellIds.join(', ')}`);
+
+                  // Emitir el evento de eliminación de celdas a todos los usuarios del workspace
+              } else {
+                  console.error('Modelo no encontrado para eliminar celdas.');
+              }
+          } else {
+              console.error('ProductLine no encontrada para eliminar celdas.');
+          }
+      } else {
+          console.error('Error: Proyecto no encontrado para eliminar celdas.');
+      }
+
+  } catch (err) {
+      console.error('Error eliminando celdas en el proyecto:', err);
+  }
+  io.to(data.workspaceId).emit('cellRemoved', data);
+});
+
+socket.on('cellConnected', async (data) => {
+  console.log('Server received cellConnected:', data);
+
+  const selectProjectQuery = `SELECT project FROM variamos.project WHERE id = $1`;
+  const projectValues = [data.projectId];
+
+  try {
+      const projectResult = await queryDB(selectProjectQuery, projectValues);
+
+      if (projectResult.rows.length > 0) {
+          let projectJson = projectResult.rows[0].project;
+
+          // Encontrar la product line y el modelo correspondientes
+          let productLine = projectJson.productLines.find(pl => pl.id === data.productLineId);
+          if (productLine) {
+              let model = productLine.domainEngineering.models.find(m => m.id === data.modelId);
+              if (model) {
+                  // Añadir la nueva conexión
+                  const newConnection = {
+                      id: uuidv4(),
+                      sourceId: data.sourceId,
+                      targetId: data.targetId,
+                      properties: data.properties || [],
+                  };
+
+                  model.relationships.push(newConnection);
+
+                  // Guardar el JSON actualizado en la base de datos
+                  const updateProjectQuery = `UPDATE variamos.project SET project = $1 WHERE id = $2`;
+                  const updateValues = [JSON.stringify(projectJson), data.projectId];
+
+                  await queryDB(updateProjectQuery, updateValues);
+                  console.log(`Conexión guardada en el modelo: ${data.sourceId} -> ${data.targetId}`);
+
+                  // Emitir el evento de conexión a todos los usuarios del workspace
+              } else {
+                  console.error('Modelo no encontrado para agregar la conexión.');
+              }
+          } else {
+              console.error('ProductLine no encontrada para agregar la conexión.');
+          }
+      } else {
+          console.error('Error: Proyecto no encontrado para agregar la conexión.');
+      }
+
+  } catch (err) {
+      console.error('Error guardando la conexión en el proyecto:', err);
+  }
+  io.to(data.workspaceId).emit('cellConnected', data);
+});
+
+socket.on('propertiesChanged', async (data) => {
+  console.log('Server received propertiesChanged:', data);
+
+  const selectProjectQuery = `SELECT project FROM variamos.project WHERE id = $1`;
+  const projectValues = [data.projectId];
+
+  try {
+      const projectResult = await queryDB(selectProjectQuery, projectValues);
+
+      if (projectResult.rows.length > 0) {
+          let projectJson = projectResult.rows[0].project;
+
+          // Encontrar la product line y el modelo correspondientes
+          let productLine = projectJson.productLines.find(pl => pl.id === data.productLineId);
+          if (productLine) {
+              let model = productLine.domainEngineering.models.find(m => m.id === data.modelId);
+              if (model) {
+                  // Encontrar la celda y actualizar sus propiedades
+                  let cell = model.elements.find(c => c.id === data.cellId);
+                  if (cell) {
+                      data.properties.forEach(prop => {
+                          const existingProp = cell.properties.find(p => p.name === prop.name);
+                          if (existingProp) {
+                              existingProp.value = prop.value;
+                          } else {
+                              cell.properties.push(prop);
+                          }
+                      });
+
+                      // Guardar el JSON actualizado en la base de datos
+                      const updateProjectQuery = `UPDATE variamos.project SET project = $1 WHERE id = $2`;
+                      const updateValues = [JSON.stringify(projectJson), data.projectId];
+
+                      await queryDB(updateProjectQuery, updateValues);
+                      console.log(`Propiedades de la celda actualizadas en el proyecto: ${data.cellId}`);
+
+                      // Emitir el evento de cambio de propiedades a todos los usuarios del workspace
+                  } else {
+                      console.error('Celda no encontrada para cambiar propiedades.');
+                  }
+              } else {
+                  console.error('Modelo no encontrado para cambiar propiedades de la celda.');
+              }
+          } else {
+              console.error('ProductLine no encontrada para cambiar propiedades de la celda.');
+          }
+      } else {
+          console.error('Error: Proyecto no encontrado para cambiar propiedades de la celda.');
+      }
+
+  } catch (err) {
+      console.error('Error cambiando propiedades de la celda en el proyecto:', err);
+  }
+  io.to(data.workspaceId).emit('propertiesChanged', data);
+});
   
   socket.on('cursorMoved', (data) => {
     io.to(data.workspaceId).emit('cursorMoved', data);
@@ -580,43 +738,101 @@ socket.on('configurationDeleted', async (data) => {
 
   socket.on('edgeStyleChanged', async (data) => {
     console.log('Server received edgeStyleChanged:', data);
-  
-    const query = `UPDATE testvariamos.edges SET style = $1 WHERE id = $2`;
-    const values = [JSON.stringify(data.newStyle), data.edgeId];
-  
+
+    const selectProjectQuery = `SELECT project FROM variamos.project WHERE id = $1`;
+    const projectValues = [data.projectId];
+
     try {
-      await queryDB(query, values);
-      console.log(`Estilo del borde actualizado en la base de datos: ${data.edgeId}`);
+        const projectResult = await queryDB(selectProjectQuery, projectValues);
+
+        if (projectResult.rows.length > 0) {
+            let projectJson = projectResult.rows[0].project;
+
+            // Encontrar la product line y el modelo correspondientes
+            let productLine = projectJson.productLines.find(pl => pl.id === data.productLineId);
+            if (productLine) {
+                let model = productLine.domainEngineering.models.find(m => m.id === data.modelId);
+                if (model) {
+                    // Encontrar la relación y cambiar su estilo
+                    let edge = model.relationships.find(r => r.id === data.edgeId);
+                    if (edge) {
+                        edge.style = data.newStyle;
+
+                        // Guardar el JSON actualizado en la base de datos
+                        const updateProjectQuery = `UPDATE variamos.project SET project = $1 WHERE id = $2`;
+                        const updateValues = [JSON.stringify(projectJson), data.projectId];
+
+                        await queryDB(updateProjectQuery, updateValues);
+                        console.log(`Estilo del borde actualizado en el proyecto: ${data.edgeId}`);
+
+                        // Emitir el evento de cambio de estilo a todos los usuarios del workspace
+                    } else {
+                        console.error('Borde no encontrado para cambiar estilo.');
+                    }
+                } else {
+                    console.error('Modelo no encontrado para cambiar estilo del borde.');
+                }
+            } else {
+                console.error('ProductLine no encontrada para cambiar estilo del borde.');
+            }
+        } else {
+            console.error('Error: Proyecto no encontrado para cambiar estilo del borde.');
+        }
+
     } catch (err) {
-      console.error('Error actualizando el estilo del borde:', err);
+        console.error('Error cambiando estilo del borde en el proyecto:', err);
     }
-  
     io.to(data.workspaceId).emit('edgeStyleChanged', data);
-  });
+});
   
-  socket.on('edgeLabelChanged', async (data) => {
-    console.log('Server received edgeLabelChanged:', data);
-  
-    // Validar que label y edgeId no sean undefined
-    if (!data.label || !data.cellId) {
-      console.error('Etiqueta o ID del borde no proporcionados. No se puede actualizar.');
-      return;
-    }
-  
-    const query = `UPDATE testvariamos.edges SET label = $1 WHERE id = $2`;
-    const values = [data.label, data.cellId];
-  
-    try {
-      await queryDB(query, values);
-      console.log(`Etiqueta del borde actualizada en la base de datos. Edge ID: ${data.cellId}, Nueva etiqueta: ${data.label}`);
-    } catch (err) {
-      console.error('Error actualizando la etiqueta del borde:', err);
-    }
-  
-    // Emitir el cambio a los demás usuarios del workspace
-    io.to(data.workspaceId).emit('edgeLabelChanged', data);
-  });
-  
+socket.on('edgeLabelChanged', async (data) => {
+  console.log('Server received edgeLabelChanged:', data);
+
+  const selectProjectQuery = `SELECT project FROM variamos.project WHERE id = $1`;
+  const projectValues = [data.projectId];
+
+  try {
+      const projectResult = await queryDB(selectProjectQuery, projectValues);
+
+      if (projectResult.rows.length > 0) {
+          let projectJson = projectResult.rows[0].project;
+
+          // Encontrar la product line y el modelo correspondientes
+          let productLine = projectJson.productLines.find(pl => pl.id === data.productLineId);
+          if (productLine) {
+              let model = productLine.domainEngineering.models.find(m => m.id === data.modelId);
+              if (model) {
+                  // Encontrar la relación y cambiar su etiqueta
+                  let edge = model.relationships.find(r => r.id === data.edgeId);
+                  if (edge) {
+                      edge.label = data.label;
+
+                      // Guardar el JSON actualizado en la base de datos
+                      const updateProjectQuery = `UPDATE variamos.project SET project = $1 WHERE id = $2`;
+                      const updateValues = [JSON.stringify(projectJson), data.projectId];
+
+                      await queryDB(updateProjectQuery, updateValues);
+                      console.log(`Etiqueta del borde actualizada en el proyecto: ${data.edgeId}`);
+
+                      // Emitir el evento de cambio de etiqueta a todos los usuarios del workspace
+                  } else {
+                      console.error('Borde no encontrado para cambiar etiqueta.');
+                  }
+              } else {
+                  console.error('Modelo no encontrado para cambiar etiqueta del borde.');
+              }
+          } else {
+              console.error('ProductLine no encontrada para cambiar etiqueta del borde.');
+          }
+      } else {
+          console.error('Error: Proyecto no encontrado para cambiar etiqueta del borde.');
+      }
+
+  } catch (err) {
+      console.error('Error cambiando etiqueta del borde en el proyecto:', err);
+  }
+  io.to(data.workspaceId).emit('edgeLabelChanged', data);
+});
   
   // Al desconectarse, eliminar el usuario del workspace correspondiente
   socket.on('disconnect', () => {
