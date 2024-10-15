@@ -104,12 +104,12 @@ export default class ProjectService {
   });
 
   this.socket.on('projectCreated', (data) => {
-    console.log('Received projectCreated event:', data); // Verificar si el evento fue recibido
+    console.log('Received projectCreated event:', data); // Log para verificar si el evento fue recibido
     if (data.workspaceId === this.workspaceId && data.clientId !== this.clientId) {
         console.log(`Processing projectCreated for workspace ${data.workspaceId}`);
-        this.handleProjectCreated(data.project);
+        this.handleProjectCreated(data.project);  // Maneja la creación del proyecto
     } else {
-        console.log('Ignored projectCreated from clientId:', data.clientId); // Ignorar si el evento fue enviado por el propio cliente
+        console.log('Ignored projectCreated from clientId:', data.clientId);
     }
 });
 
@@ -734,8 +734,10 @@ public getSocket() {
 
   createProject(projectName: string): Project {
     let project = this.projectManager.createProject(projectName);
+    console.log(`Proyecto creado: ID: ${project.id}, Nombre: ${project.name}`);
     project = this.loadProject(project);
-
+    console.log(`Proyecto cargado: ID: ${project.id}, Nombre: ${project.name}`);
+    this.emitProjectCreated(project);
     return project;
   }
 
@@ -1056,13 +1058,19 @@ joinWorkspace(workspaceId: string) {
 }
 
 private emitProductLineCreated(projectId: string, productLine: ProductLine) {
-    this.socket.emit('productLineCreated', {
-        clientId: this.clientId,
-        workspaceId: this.workspaceId,
-        projectId: projectId,
-        productLine
-    });
+  if (!projectId) {
+      console.error('Error: Project ID is missing. Cannot emit productLineCreated event.');
+      return;
+  }
+  console.log('Emitting productLineCreated event for project:', projectId, productLine);
+  this.socket.emit('productLineCreated', {
+      clientId: this.clientId,
+      workspaceId: this.workspaceId,
+      projectId: projectId,
+      productLine
+  });
 }
+
 
 private handleProductLineCreated(projectId: string, productLine: ProductLine) {
   console.log('Adding productLine to the project:', projectId, productLine);
