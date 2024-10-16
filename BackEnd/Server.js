@@ -73,6 +73,40 @@ io.on('connection', (socket) => {
     }
   });
 
+  // Manejar el registro de workspaces y guardar en la base de datos
+  socket.on('registerWorkspace', async (data) => {
+    const { clientId, workspaceId } = data;
+  
+    if (!workspaceId || !clientId) {
+      console.error('Workspace o ClientID undefined. No se puede registrar el workspace.');
+      return;
+    }
+  
+    try {
+      // Verificar si el workspace ya está registrado en la base de datos
+      const checkWorkspaceQuery = 'SELECT * FROM variamos.workspace_users WHERE workspace_id = $1 AND client_id = $2';
+      const checkValues = [workspaceId, clientId];
+      const result = await queryDB(checkWorkspaceQuery, checkValues);
+  
+      if (result.rowCount === 0) {
+        // Si no existe, lo agregamos
+        const query = `INSERT INTO variamos.workspace_users (workspace_id, client_id, socket_id) VALUES ($1, $2, $3)`;
+        const values = [workspaceId, clientId, socket.id];
+        await queryDB(query, values);
+        console.log(`Client ${clientId} registered to workspace ${workspaceId} (Socket ID: ${socket.id})`);
+      } else {
+        console.log(`Client ${clientId} already in workspace ${workspaceId}`);
+      }
+  
+      // Confirmar al cliente que el workspace fue registrado
+      io.to(socket.id).emit('workspaceRegistered', { success: true, workspaceId });
+  
+    } catch (err) {
+      console.error('Error registrando el workspace en la base de datos:', err);
+      io.to(socket.id).emit('workspaceRegistered', { success: false, error: err });
+    }
+  });
+  
   // Gestionar invitaciones para colaborar
   // Gestionar invitaciones para colaborar
 // Gestionar invitaciones para colaborar
@@ -93,95 +127,86 @@ socket.on('sendInvitation', (data) => {
   // Manejar el evento de unirse a un workspace
 // Manejar el evento de unirse a un workspace
 socket.on('joinWorkspace', async (data) => {
-    const { clientId, workspaceId } = data;
-  
-    // Unir el socket al room correspondiente al workspace
-    socket.join(workspaceId);
-    console.log(`Client ${clientId} joined workspace ${workspaceId} (Socket ID: ${socket.id})`);
-  
-    // Guardar la relación entre el cliente y el workspace en la base de datos
-    const query = `INSERT INTO variamos.workspace_users (workspace_id, client_id, socket_id) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`;
-    const values = [workspaceId, clientId, socket.id];
-  
-    try {
-      await queryDB(query, values);
-      console.log(`Client ${clientId} added to workspace ${workspaceId} in the database`);
-    } catch (err) {
-      console.error('Error saving workspace join in the database:', err);
-    }
-  
-    // Verificar si el proyecto por defecto "My Project" ya existe en el workspace
-    const checkProjectQuery = `SELECT * FROM variamos.project WHERE workspace_id = $1 AND project->>'name' = $2`;
-    const projectValues = [workspaceId, 'My project'];
-  
-    try {
-      const projectResult = await queryDB(checkProjectQuery, projectValues);
-  
-      if (projectResult.rowCount === 0) {
-        // Si no existe, crear el proyecto "My Project"
-        const projectId = uuidv4();
-        const projectData = {
-          id: projectId,
-          name: 'My project',
-          enable: true,
-          productLines: [] // Puedes ajustar según lo que necesites en la estructura del proyecto
-        };
-        
-        const insertProjectQuery = `INSERT INTO variamos.project (id, project, workspace_id) VALUES ($1, $2, $3)`;
-        const insertProjectValues = [projectId, JSON.stringify(projectData), workspaceId];
-        
-        try {
-          await queryDB(insertProjectQuery, insertProjectValues);
-          console.log(`Project "My Project" created for workspace ${workspaceId}`);
-  
-          // Validar si el proyecto se creó correctamente
-          const validationQuery = `SELECT * FROM variamos.project WHERE id = $1`;
-          const validationResult = await queryDB(validationQuery, [projectId]);
-          
-          if (validationResult.rowCount === 0) {
-            console.error(`Project ${projectId} was not found after creation.`);
-          } else {
-            console.log(`Project ${projectId} was successfully created and validated.`);
-          }
-  
-          // Emitir el evento de creación del proyecto al usuario que se unió
-          io.to(socket.id).emit('projectCreated', {
-            clientId,
-            workspaceId,
-            project: projectData
-          });
-        } catch (err) {
-          console.error('Error creating "My Project":', err);
-        }
-      } else {
-        console.log(`Project "My Project" already exists in workspace ${workspaceId}`);
-        
-        // Emitir el evento de proyecto ya existente al usuario
+  const { clientId, workspaceId } = data;
+
+  // Unir el socket al room correspondiente al workspace
+  socket.join(workspaceId);
+  console.log(`Client ${clientId} joined workspace ${workspaceId} (Socket ID: ${socket.id})`);
+
+  // Guardar la relación entre el cliente y el workspace en la base de datos
+  const query = `INSERT INTO variamos.workspace_users (workspace_id, client_id, socket_id) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`;
+  const values = [workspaceId, clientId, socket.id];
+
+  try {
+    await queryDB(query, values);
+    console.log(`Client ${clientId} added to workspace ${workspaceId} in the database`);
+  } catch (err) {
+    console.error('Error saving workspace join in the database:', err);
+  }
+
+  // Verificar si el proyecto por defecto "My Project" ya existe en el workspace
+  const checkProjectQuery = `SELECT * FROM variamos.project WHERE workspace_id = $1 AND project->>'name' = $2`;
+  const projectValues = [workspaceId, 'My project'];
+
+  try {
+    const projectResult = await queryDB(checkProjectQuery, projectValues);
+
+    if (projectResult.rowCount === 0) {
+      // Si no existe, crear el proyecto "My Project"
+      const projectId = uuidv4();
+      const projectData = {
+        id: projectId,
+        name: 'My project',
+        enable: true,
+        productLines: [] // Puedes ajustar según lo que necesites en la estructura del proyecto
+      };
+      
+      const insertProjectQuery = `INSERT INTO variamos.project (id, project, workspace_id) VALUES ($1, $2, $3)`;
+      const insertProjectValues = [projectId, JSON.stringify(projectData), workspaceId];
+      
+      try {
+        await queryDB(insertProjectQuery, insertProjectValues);
+        console.log(`Project "My Project" created for workspace ${workspaceId}`);
+
+        // Emitir el evento de creación del proyecto al usuario que se unió
         io.to(socket.id).emit('projectCreated', {
           clientId,
           workspaceId,
-          project: projectResult.rows[0].project // Emitimos el proyecto existente desde el campo 'project'
+          project: projectData
         });
+      } catch (err) {
+        console.error('Error creating "My Project":', err);
       }
-    } catch (err) {
-      console.error('Error checking for "My Project" in workspace:', err);
-    }
-  
-    // Verificar si el anfitrión está unido al workspace
-    const clientsInWorkspace = io.sockets.adapter.rooms.get(workspaceId);
-    if (clientsInWorkspace) {
-      clientsInWorkspace.forEach(socketId => {
-        console.log(`User in workspace: ${socketId}`);
+    } else {
+      console.log(`Project "My Project" already exists in workspace ${workspaceId}`);
+      
+      // Emitir el evento de proyecto ya existente al usuario
+      io.to(socket.id).emit('projectCreated', {
+        clientId,
+        workspaceId,
+        project: projectResult.rows[0].project // Emitimos el proyecto existente desde el campo 'project'
       });
     }
-  
-    // Notificar al cliente que ha unido un workspace
-    io.to(socket.id).emit('workspaceJoined', { clientId, workspaceId });
-  });
-  
+  } catch (err) {
+    console.error('Error checking for "My Project" in workspace:', err);
+  }
+
+  // Verificar si el anfitrión está unido al workspace
+  const clientsInWorkspace = io.sockets.adapter.rooms.get(workspaceId);
+  if (clientsInWorkspace) {
+    clientsInWorkspace.forEach(socketId => {
+      console.log(`User in workspace: ${socketId}`);
+    });
+  }
+
+  // Notificar al cliente que ha unido un workspace
+  io.to(socket.id).emit('workspaceJoined', { clientId, workspaceId });
+});
   
   // Manejar la creación de proyectos
-  socket.on('projectCreated', async (data) => {
+  // Manejar la creación de proyectos
+// Manejar la creación de proyectos
+socket.on('projectCreated', async (data) => {
     console.log('Server received projectCreated:', data);
 
     // Crear el JSON del proyecto para almacenarlo en la base de datos
@@ -198,19 +223,20 @@ socket.on('joinWorkspace', async (data) => {
         }
     };
 
-    // Actualizar el JSON para que también contenga el workspaceId
-    const query = `INSERT INTO variamos.project(id, project, workspace_id) VALUES($1, $2, $3)`;
-    const values = [data.project.id, JSON.stringify(projectJson), data.workspaceId];  // Incluir el workspaceId aquí
+    const query = `INSERT INTO variamos.project(id, project) VALUES($1, $2)`;
+    const values = [data.project.id, JSON.stringify(projectJson)];
 
     try {
         await queryDB(query, values);
         console.log(`Proyecto guardado en la base de datos: ${data.project.name}`);
+
+        // Emitir el evento de creación del proyecto a todos los usuarios del workspace
+        io.to(data.workspaceId).emit('projectCreated', data);
     } catch (err) {
         console.error('Error guardando el proyecto en la base de datos:', err);
     }
-
-    // Emitir el evento de creación de proyecto a todos los usuarios del workspace
-    io.to(data.workspaceId).emit('projectCreated', data);
+  // Emitir el evento de creación de proyecto a todos los usuarios del workspace
+  io.to(data.workspaceId).emit('projectCreated', data);
 });
 
 // Manejar la creación de productLines
