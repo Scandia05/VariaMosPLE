@@ -73,6 +73,40 @@ io.on('connection', (socket) => {
     }
   });
 
+  // Manejar el registro de workspaces y guardar en la base de datos
+  socket.on('registerWorkspace', async (data) => {
+    const { clientId, workspaceId } = data;
+  
+    if (!workspaceId || !clientId) {
+      console.error('Workspace o ClientID undefined. No se puede registrar el workspace.');
+      return;
+    }
+  
+    try {
+      // Verificar si el workspace ya está registrado en la base de datos
+      const checkWorkspaceQuery = 'SELECT * FROM variamos.workspace_users WHERE workspace_id = $1 AND client_id = $2';
+      const checkValues = [workspaceId, clientId];
+      const result = await queryDB(checkWorkspaceQuery, checkValues);
+  
+      if (result.rowCount === 0) {
+        // Si no existe, lo agregamos
+        const query = `INSERT INTO variamos.workspace_users (workspace_id, client_id, socket_id) VALUES ($1, $2, $3)`;
+        const values = [workspaceId, clientId, socket.id];
+        await queryDB(query, values);
+        console.log(`Client ${clientId} registered to workspace ${workspaceId} (Socket ID: ${socket.id})`);
+      } else {
+        console.log(`Client ${clientId} already in workspace ${workspaceId}`);
+      }
+  
+      // Confirmar al cliente que el workspace fue registrado
+      io.to(socket.id).emit('workspaceRegistered', { success: true, workspaceId });
+  
+    } catch (err) {
+      console.error('Error registrando el workspace en la base de datos:', err);
+      io.to(socket.id).emit('workspaceRegistered', { success: false, error: err });
+    }
+  });
+  
   // Gestionar invitaciones para colaborar
   // Gestionar invitaciones para colaborar
 // Gestionar invitaciones para colaborar
@@ -151,23 +185,50 @@ socket.on('joinWorkspace', async (data) => {
   
   // Manejar la creación de proyectos
   // Manejar la creación de proyectos
+// Manejar la creación de proyectos
 socket.on('projectCreated', async (data) => {
     console.log('Server received projectCreated:', data);
 
-    // Verificar si el workspace_id existe en workspace_users antes de insertar el proyecto
-    const checkWorkspaceQuery = `SELECT * FROM variamos.workspace_users WHERE workspace_id = $1`;
-    const workspaceValues = [data.workspaceId];
-
     try {
+        // Verificar si el workspace_id existe en workspace_users antes de insertar el proyecto
+        const checkWorkspaceQuery = `SELECT * FROM variamos.workspace_users WHERE workspace_id = $1 AND client_id = $2`;
+        const workspaceValues = [data.workspaceId, data.clientId];
+
         const workspaceResult = await queryDB(checkWorkspaceQuery, workspaceValues);
 
         if (workspaceResult.rowCount === 0) {
             console.error(`Workspace ${data.workspaceId} no existe en workspace_users. No se puede crear el proyecto.`);
+            // Intentamos de nuevo con un retraso para dar tiempo al registro en workspace_users
+            setTimeout(async () => {
+                const retryWorkspaceResult = await queryDB(checkWorkspaceQuery, workspaceValues);
+                if (retryWorkspaceResult.rowCount === 0) {
+                    console.error(`Workspace ${data.workspaceId} no existe tras reintento. No se puede crear el proyecto.`);
+                    return;
+                } else {
+                    // Si el workspace se encuentra tras el retraso, creamos el proyecto
+                    await insertProject(data);
+                }
+            }, 1000); // Espera de 1 segundo antes de volver a intentar
             return;
         }
 
-        // Guardar el proyecto en la base de datos
-        const query = `INSERT INTO variamos.project(id, project, workspace_id) VALUES($1, $2, $3)`;
+        // Si el workspace ya existe, creamos el proyecto inmediatamente
+        await insertProject(data);
+
+    } catch (err) {
+        console.error('Error guardando el proyecto en la base de datos:', err);
+    }
+});
+
+// Función para insertar el proyecto en la base de datos
+async function insertProject(data) {
+    try {
+        const query = `
+            INSERT INTO variamos.project (id, project, workspace_id)
+            VALUES ($1, $2, $3)
+            ON CONFLICT (id) DO UPDATE
+            SET project = EXCLUDED.project
+        `;
         const values = [data.project.id, JSON.stringify(data.project), data.workspaceId];
 
         await queryDB(query, values);
@@ -178,8 +239,7 @@ socket.on('projectCreated', async (data) => {
     } catch (err) {
         console.error('Error guardando el proyecto en la base de datos:', err);
     }
-});
-
+}
 
 // Manejar la creación de productLines
 socket.on('productLineCreated', async (data) => {
