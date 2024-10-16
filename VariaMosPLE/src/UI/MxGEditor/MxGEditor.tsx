@@ -82,6 +82,7 @@ export default class MxGEditor extends Component<Props, State> {
     this.clientId = this.props.projectService.getClientId();
     this.workspaceId = this.props.projectService.getWorkspaceId();
     console.log("MxGEditor initialized with workspaceId:", this.workspaceId);
+    console.log('TEST VARIABLE:', process.env.REACT_APP_TEST_VARIABLE);
     this.user = userProfile ? userProfile.givenName : this.clientId; // Asigna el nombre del usuario o el clientId si no está disponible
     this.userName = userProfile ? userProfile.email : this.clientId;
 
