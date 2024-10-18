@@ -43,6 +43,7 @@ export default class ProjectService {
   public socket= socket;
   private clientId: string;
   public workspaceId: string;
+  private projectCreated: boolean = false;
   private projectManager: ProjectManager = new ProjectManager();
   private languageUseCases: LanguageUseCases = new LanguageUseCases();
   private projectPersistenceUseCases: ProjectPersistenceUseCases = new ProjectPersistenceUseCases();
@@ -729,7 +730,23 @@ public getSocket() {
     // Emitir evento de creación de proyecto para trabajo colaborativo
     this.emitProjectCreated(project);
 
+    // Marcar que el proyecto ha sido creado
+    this.projectCreated = true;
+    
+     // Emitir evento para informar a la UI sobre el cambio
+    this.raiseProjectCreatedEvent();
+
     return project;
+}
+
+public isProjectCreated(): boolean {
+  return this.projectCreated;
+}
+
+private raiseProjectCreatedEvent() {
+  // Emitir evento para que la UI sepa que un proyecto ha sido creado
+  const event = new CustomEvent('projectCreated', { detail: { projectCreated: this.projectCreated } });
+  window.dispatchEvent(event);  // Enviar el evento globalmente
 }
 
   createProject(projectName: string): Project {
