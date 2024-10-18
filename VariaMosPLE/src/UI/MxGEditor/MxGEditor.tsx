@@ -44,6 +44,7 @@ interface State {
   messageModalTitle: string;
   showInviteModal: boolean;
   inviteData: any;
+  projectCreated: boolean;
 }
 
 export default class MxGEditor extends Component<Props, State> {
@@ -58,7 +59,7 @@ export default class MxGEditor extends Component<Props, State> {
   private user: string;
   private userName: string;
   private workspaceId: string;
-
+ 
   constructor(props: Props) {
     super(props);
     this.containerRef = React.createRef();
@@ -75,7 +76,8 @@ export default class MxGEditor extends Component<Props, State> {
       messageModalContent: null,
       messageModalTitle: null,
       showInviteModal: false, // Estado para el modal de invitación
-      inviteData: null
+      inviteData: null,
+      projectCreated: false,
     }
 
     const userProfile = JSON.parse(sessionStorage.getItem(SignUpKeys.CurrentUserProfile) || localStorage.getItem(SignUpKeys.CurrentUserProfile));
@@ -84,6 +86,8 @@ export default class MxGEditor extends Component<Props, State> {
     console.log("MxGEditor initialized with workspaceId:", this.workspaceId);
     this.user = userProfile ? userProfile.givenName : this.clientId; // Asigna el nombre del usuario o el clientId si no está disponible
     this.userName = userProfile ? userProfile.email : this.clientId;
+    this.handleInviteCollaborator = this.handleInviteCollaborator.bind(this);
+    this.checkProjectCreation = this.checkProjectCreation.bind(this);
 
     this.projectService_addNewProductLineListener = this.projectService_addNewProductLineListener.bind(this);
     this.projectService_addSelectedModelListener = this.projectService_addSelectedModelListener.bind(this);
@@ -161,6 +165,7 @@ export default class MxGEditor extends Component<Props, State> {
 
   componentDidMount() {
     let me = this;
+    this.checkProjectCreation(); 
     this.graph = new mx.mxGraph(this.graphContainerRef.current);
     this.props.projectService.setGraph(this.graph);
     this.LoadGraph(this.graph);
@@ -543,7 +548,19 @@ this.socket.on('invitationReceived', (data) => {
     });
   }
 });
+  
+window.addEventListener("projectCreated", (event: Event) => {
+  const customEvent = event as CustomEvent; // Conversión a CustomEvent
+  if (customEvent.detail.projectCreated) {
+    this.setState({ projectCreated: true });
+  }
+});
 
+  }
+
+  checkProjectCreation() {
+    const projectCreated = this.props.projectService.isProjectCreated();
+    this.setState({ projectCreated });
   }
 
   updateCursor(clientId, user, x, y) {
@@ -1971,9 +1988,14 @@ handleAcceptInvitation() {
           <a title="Reset configuration" onClick={this.btnResetConfiguration_onClick.bind(this)}><span><FaBolt /></span></a>
           <a title="Check consistency" onClick={this.btnCheckConsistency_onClick.bind(this)}><span><IoMdAlert /></span></a>
 
-          <Button variant="primary" onClick={this.handleInviteCollaborator.bind(this)}>
+          <Button
+          variant="primary"
+          onClick={this.handleInviteCollaborator}
+          disabled={!this.state.projectCreated} // Deshabilitado si no hay proyecto creado
+        >
           Invitar a colaborar
-          </Button>
+        </Button>
+
 
         </div>
         {this.renderContexMenu()}
