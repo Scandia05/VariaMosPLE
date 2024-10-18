@@ -41,7 +41,7 @@ const workspaces = {}; // Estructura para almacenar usuarios por workspace
 app.use(cors());
 app.use(express.json());
 
-io.on('connection', async (socket) => {
+io.on('connection', (socket) => {
   console.log(`New client connected: ${socket.id}`);
 
   // Registrar usuarios como invitados
@@ -515,35 +515,6 @@ socket.on('cellMoved', async (data) => {
   io.to(data.workspaceId).emit('cellMoved', data);
 });
   
-    const query = `UPDATE testvariamos.models SET data = $1 WHERE id = $2`;
-    const values = [JSON.stringify(data.configuration), data.modelId];
-  
-    try {
-      await queryDB(query, values);
-      console.log(`Modelo configurado actualizado en la base de datos: ${data.modelId}`);
-    } catch (err) {
-      console.error('Error actualizando el modelo configurado:', err);
-    }
-  
-    io.to(data.workspaceId).emit('modelConfigured', data);
-  });
-
-  socket.on('cellMoved', async (data) => {
-    console.log('Server received cellMoved:', data);
-  
-    const query = `UPDATE testvariamos.cells SET data = $1 WHERE id = $2`;
-    const values = [JSON.stringify(data.cell), data.cellId];
-  
-    try {
-      await queryDB(query, values);
-      console.log(`Celda movida actualizada en la base de datos: ${data.cellId}`);
-    } catch (err) {
-      console.error('Error actualizando la celda:', err);
-    }
-  
-    io.to(data.workspaceId).emit('cellMoved', data);
-  });
-  
 socket.on('cellResized', async (data) => {
   console.log('Server received cellResized:', data);
 
@@ -915,7 +886,7 @@ socket.on('edgeLabelChanged', async (data) => {
     }
     console.log(`Client disconnected: ${socket.id}`);
   });
-
+});
 
 const PORT = 4000;
 server.listen(PORT, () => {
