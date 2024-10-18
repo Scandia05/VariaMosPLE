@@ -9,7 +9,7 @@ const app = express();
 const server = http.createServer(app);
 const io = socketIo(server, {
   cors: {
-    origin: "http://localhost:3000",
+    origin: "http://ceis.variamos.com:8080",
     methods: ["GET", "POST"]
   }
 });
@@ -17,8 +17,8 @@ const io = socketIo(server, {
 const pool = new Pool({
   user: 'adminpg',
   host: '200.13.4.230',
-  database: 'variamos_nuevo',
-  password: 'seba2424',
+  database: 'variamosdb',
+  password: 'a=m=8hos.G!-s<*M1G',
   port: 5432,
 });
 
