@@ -104,14 +104,24 @@ export default class ProjectService {
       this.socket.emit('registerWorkspace', { clientId: this.clientId, workspaceId: this.workspaceId });
   });
 
-  this.socket.on('projectCreated', (data) => {
-    console.log('Received projectCreated event:', data); // Log para verificar si el evento fue recibido
-    if (data.workspaceId === this.workspaceId && data.clientId !== this.clientId) {
-        console.log(`Processing projectCreated for workspace ${data.workspaceId}`);
-        this.handleProjectCreated(data.project);  // Maneja la creación del proyecto
-    } else {
-        console.log('Ignored projectCreated from clientId:', data.clientId);
-    }
+ // this.socket.on('projectCreated', (data) => {
+   // console.log('Received projectCreated event:', data); // Log para verificar si el evento fue recibido
+    //if (data.workspaceId === this.workspaceId && data.clientId !== this.clientId) {
+      //  console.log(`Processing projectCreated for workspace ${data.workspaceId}`);
+        //this.handleProjectCreated(data.project);  // Maneja la creación del proyecto
+    //} else {
+      //  console.log('Ignored projectCreated from clientId:', data.clientId);
+    //}
+//});
+
+this.socket.on('replaceProject', (data) => {
+  console.log('Replacing project with data from server:', data.project);
+
+  // Lógica para reemplazar el proyecto actual con el nuevo proyecto
+  this.replaceProject(data.project);
+
+  // Emitir un evento para que la UI u otros componentes sepan que el proyecto ha sido reemplazado
+  this.raiseEventUpdateProject(this._project, null);
 });
 
   // Cliente: Escuchar la creación de Product Line retransmitida por el servidor
@@ -174,6 +184,11 @@ export default class ProjectService {
       }
   });
 
+  }
+
+  private replaceProject(newProject: Project): void {
+    this._project = newProject;
+    console.log('Project replaced with:', this._project);
   }
   
   getUserEmail(): string | null {
