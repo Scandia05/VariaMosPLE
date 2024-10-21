@@ -139,7 +139,7 @@ this.socket.on('replaceProject', (data) => {
     console.log('Received modelCreated event:', data); // Log para verificar si el modelo fue recibido
     if (data.workspaceId === this.workspaceId && data.clientId !== this.clientId) {
       console.log(`Processing modelCreated for workspace ${data.workspaceId}`);
-      this.handleModelCreated(data.model);
+      this.handleModelCreated(data.projectId, data.productLineId, data.model);
     } else {
       console.log('Ignored modelCreated from clientId:', data.clientId); // Log si el evento es ignorado por alguna razón
     }
@@ -1195,6 +1195,7 @@ private handleProductLineCreated(projectId: string, productLine: ProductLine) {
   //createDomainEngineeringModel functions_ START***********
   createDomainEngineeringModel(project: Project, languageType: string, name: string) {
     const newModel = this.projectManager.createDomainEngineeringModel(project, languageType, this.productLineSelected, name);
+    console.log(`Domain Engineering Model created: ${newModel.name} (ID: ${newModel.id}), Language Type: ${languageType}`);
     this.emitModelCreated(newModel);
     return newModel;
   }
@@ -1224,6 +1225,7 @@ private handleProductLineCreated(projectId: string, productLine: ProductLine) {
   //createApplicationEngineeringModel functions_ START***********
   createApplicationEngineeringModel(project: Project, languageType: string, name: string) {
     const newModel = this.projectManager.createApplicationEngineeringModel(project, languageType, this.productLineSelected, name);
+    console.log(`Application Engineering Model created: ${newModel.name} (ID: ${newModel.id}), Language Type: ${languageType}`);
     this.emitModelCreated(newModel);
     return newModel;
   }
@@ -1291,24 +1293,47 @@ private handleProductLineCreated(projectId: string, productLine: ProductLine) {
     this.socket.emit('modelCreated', { clientId: this.clientId, workspaceId: this.workspaceId, projectId: this._project.id, productLineId: this._project.productLines[this.productLineSelected].id, model });
   }
 
-  private handleModelCreated(model: Model) {
-    const productLine = this._project.productLines[this.productLineSelected];
-  
-    if (!productLine) {
-      console.error('Product line not found');
-      return;
-    }
-  
-    if (productLine.domainEngineering) {
-      productLine.domainEngineering.models.push(model);
-      this.raiseEventDomainEngineeringModel(model);
-    } else if (productLine.applicationEngineering) {
-      productLine.applicationEngineering.models.push(model);
-      this.raiseEventApplicationEngineeringModel(model);
+  private handleModelCreated(projectId: string, productLineId: string, model: Model) {
+    const project = this._project;
+    const productLine = project.productLines.find(pl => pl.id === productLineId);
+
+    if (productLine) {
+        // Verificar si el modelo pertenece a domainEngineering
+        if (productLine.domainEngineering) {
+            productLine.domainEngineering.models.push(model);
+            this.raiseEventDomainEngineeringModel(model);
+        }
+        // Verificar si el modelo pertenece a applicationEngineering
+        else if (productLine.applicationEngineering) {
+            // Intentar encontrar el application correspondiente a este model
+            const application = productLine.applicationEngineering.applications.find(app => {
+                return app.models.some(m => m.id === model.id); // Verifica si el modelo ya pertenece a una aplicación
+            });
+
+            if (application) {
+                application.models.push(model);
+                this.raiseEventApplicationModelModel(model);
+            }
+            // Verificar si pertenece a una adaptación
+            else {
+                const adaptation = productLine.applicationEngineering.applications
+                    .flatMap(app => app.adaptations)  // Obtener todas las adaptaciones de todas las aplicaciones
+                    .find(adapt => adapt.models.some(m => m.id === model.id));  // Verifica si el modelo ya pertenece a una adaptación
+
+                if (adaptation) {
+                    adaptation.models.push(model);
+                    this.raiseEventAdaptationModelModel(model);
+                } else {
+                    console.error('Neither application nor adaptation found for model', model.id);
+                }
+            }
+        } else {
+            console.error('No domainEngineering or applicationEngineering found in the productLine');
+        }
     } else {
-      console.error('Model type not recognized or not handled yet');
+        console.error('Product line not found for projectId:', projectId, 'and productLineId:', productLineId);
     }
-  }
+}
   
   private emitModelDeleted(modelId: string) {
     console.log('Emitting modelDeleted event:', { clientId: this.clientId, workspaceId: this.workspaceId, projectId: this._project.id, productLineId: this._project.productLines[this.productLineSelected].id, modelId });
