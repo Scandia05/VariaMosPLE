@@ -200,6 +200,7 @@ export default class MxGEditor extends Component<Props, State> {
         this.socket.emit('cursorMoved', {
           clientId: this.clientId,
           workspaceId: me.workspaceId,
+          modelId: this.props.projectService.getTreeIdItemSelected(), 
           user: this.user, // Emitir el nombre del usuario
           x: e.clientX,
           y: e.clientY
@@ -514,7 +515,7 @@ me.socket.on('cellResized', (data) => {
 });
 
 this.socket.on('cursorMoved', (data) => {
-  if (data.workspaceId === this.workspaceId && data.clientId !== this.clientId) {
+  if (data.workspaceId === this.workspaceId && data.clientId !== this.clientId && data.modelId === this.props.projectService.getTreeIdItemSelected()) {
     this.updateCursor(data.clientId, data.user, data.x, data.y);
   }
 });
